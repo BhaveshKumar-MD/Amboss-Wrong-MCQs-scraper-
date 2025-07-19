@@ -1,0 +1,54 @@
+(async () => {
+  const LIMIT   = 10;   // ⬅️ How many incorrect questions to export
+  const WAIT_MS = 800;  // Wait for render (slow network? try 1000‑1200)
+
+  /* 1️⃣ Collect all dots (green + red) in the order shown on the progress bar */
+  const allDots = [...document.querySelectorAll('[class*="dotContainer"]')];
+
+  const clean   = s => s.replace(/\s+/g, ' ').trim();
+  const letterOf = (blk, idx) => {
+    const circ = blk.closest('div')?.querySelector('#CircledCharacter');
+    return circ ? circ.innerText.trim() : String.fromCharCode(65 + idx);
+  };
+
+  const blocks = [];
+  let processedWrong = 0;
+
+  /* 2️⃣ Iterate sequentially across the entire progress bar */
+  for (let i = 0; i < allDots.length && processedWrong < LIMIT; i++) {
+    const dot = allDots[i];
+    if (!dot.className.includes('dotContainerRed')) continue;   // Skip correct questions
+
+    dot.scrollIntoView({ block: 'center' });
+    dot.click();
+    await new Promise(r => setTimeout(r, WAIT_MS));
+
+    const qNode = document.querySelector('[class*="questionContent"]');
+    if (!qNode) continue;
+
+    /* Check if the question contains a table */
+    const hasTable = !!document.querySelector('[class*="modal-overflow-scroll"]');
+    const qText    = hasTable ? qNode.innerText.trim() : clean(qNode.innerText);
+
+    /* Options */
+    const opts = [...document.querySelectorAll('[class*="answerContent"]')]
+      .map((blk, idx) => `${letterOf(blk, idx)}. ${clean(blk.innerText)}`);
+
+    /* Original question number = i + 1 */
+    blocks.push(`Q${i + 1}. ${qText}\n${opts.join('\n')}`);
+    processedWrong++;
+    console.log(`✅  Saved wrong Q${i + 1} (${processedWrong}/${LIMIT})`);
+  }
+
+  /* 3️⃣ Create a plain‑text file and download it */
+  const txt  = blocks.join('\n\n-------------------------\n\n');
+  const blob = new Blob([txt], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), {
+    href: url,
+    download: 'amboss_wrong_first10_numbered.txt'
+  }).click();
+  URL.revokeObjectURL(url);
+
+  console.log('%cDone! File has been downloaded ✅', 'color:green;font-weight:bold');
+})();
