@@ -1,0 +1,95 @@
+(async () => {
+  /* ---------- Settings ---------- */
+  const LIMIT           = 10;     // how many wrong MCQs to export
+  const LOAD_WAIT_MS    = 800;    // wait after opening each question
+  const REVEAL_TIMEOUT  = 4000;   // max wait for the correct option to appear
+  const POLL_GAP_MS     = 200;    // polling interval during wait
+
+  /* ---------- Helper functions ---------- */
+  const clean = s => s.replace(/\s+/g, ' ').trim();              // collapse whitespace
+  const getLetter = blk =>
+    blk.querySelector('[data-test-id="CircledCharacter"]')?.innerText.trim() || '?';
+
+  /** Return the explanation text inside the correct‑answer block. */
+  const extractExplanation = correctBlk => {
+    const expl = correctBlk.querySelector(
+      '[data-e2e-test-id="answerExplanation"] ._981f8b48b6542a07--explanationContent'
+    );
+    return expl ? clean(expl.innerText) : 'Explanation not found';
+  };
+
+  /* ---------- Main loop ---------- */
+  const allDots = [...document.querySelectorAll('[class*="dotContainer"]')];
+  const blocks  = [];
+  let processed = 0;
+
+  for (let i = 0; i < allDots.length && processed < LIMIT; i++) {
+    const dot = allDots[i];
+    if (!dot.className.includes('dotContainerRed')) continue;    // skip already‑correct dots
+
+    /* 1️⃣  Open the wrong question */
+    dot.scrollIntoView({ block: 'center' });
+    dot.click();
+    await new Promise(r => setTimeout(r, LOAD_WAIT_MS));
+
+    /* 2️⃣  Click the “Show answer” box */
+    const showBox = [...document.querySelectorAll('.css-h0nko7-StyledInlineItem.e6i75dx1')]
+      .find(el => /show answer/i.test(el.textContent.trim()));
+    (showBox?.querySelector('button') || showBox)?.click();
+
+    /* 3️⃣  Wait until the correct option gains the “--success” class */
+    const t0 = Date.now();
+    while (
+      !document.querySelector('[class*="--success"]') &&
+      Date.now() - t0 < REVEAL_TIMEOUT
+    ) {
+      await new Promise(r => setTimeout(r, POLL_GAP_MS));
+    }
+
+    /* 4️⃣  Grab the question stem */
+    const qNode = document.querySelector('[class*="questionContent"]');
+    if (!qNode) continue;
+    const hasTable = !!document.querySelector('[class*="modal-overflow-scroll"]');
+    const qText = hasTable ? qNode.innerText.trim() : clean(qNode.innerText);
+
+    /* 5️⃣  Grab all answer options */
+    const optBlocks = [...document.querySelectorAll('[name="answertext"]')];
+    const optionLines = optBlocks.map(blk =>
+      `${getLetter(blk)}. ${clean(
+        blk.querySelector('[class*="--answerContent"]')?.innerText || ''
+      )}`
+    );
+
+    /* 6️⃣  Identify the correct option */
+    const correctBlk = document.querySelector(
+      '[data-e2e-test-id="answer-theme-answerOptionCorrect"]'
+    );
+    let correctLine   = 'Not found';
+    let explanation   = 'Explanation not found';
+
+    if (correctBlk) {
+      correctLine = `${getLetter(correctBlk)}. ${clean(
+        correctBlk.querySelector('[class*="--answerContent"]')?.innerText || ''
+      )}`;
+      explanation = extractExplanation(correctBlk);
+    }
+
+    /* 7️⃣  Compose output block */
+    blocks.push(
+      `Q${i + 1}. ${qText}\n${optionLines.join('\n')}\nCorrect: ${correctLine}\nExplanation: ${explanation}`
+    );
+    processed++;
+    console.log(`✅  Captured wrong Q${i + 1} (${processed}/${LIMIT})`);
+  }
+
+  /* ---------- Download as a text file ---------- */
+  const txt  = blocks.join('\n\n-------------------------\n\n');
+  const blob = new Blob([txt], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), {
+    href: url,
+    download: 'amboss_wrong_first10_with_expl.txt'
+  }).click();
+
+  console.log('%cFinished! File downloaded. 🎉', 'font-weight:bold;color:green');
+})();
