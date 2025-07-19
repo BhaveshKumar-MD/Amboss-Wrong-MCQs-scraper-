@@ -1,0 +1,109 @@
+(async () => {
+  /* ---------- SETTINGS ---------- */
+  const LIMIT       = 10;                       // first N wrong questions
+  const DECK_NAME   = "AMBOSS Wrong MCQs";      // must match deck in Anki
+  const MODEL_NAME  = "MCQ Ultimate V2.1";      // the note type you showed
+  const LOAD_WAIT   = 800;   // ms to wait after clicking a dot
+  const REVEAL_WAIT = 4000;  // max ms to wait for correct highlight
+  const POLL_GAP    = 200;   // ms between polls
+
+  /* ---------- HELPERS ---------- */
+  const clean = s => s.replace(/\s+/g, " ").trim();
+  const qsel  = sel => document.querySelector(sel);
+  const qselAll = sel => [...document.querySelectorAll(sel)];
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+  const letterOf = blk =>
+    blk.querySelector('[data-test-id="CircledCharacter"]')?.innerText.trim() || "?";
+
+  const post = body =>
+    fetch("http://127.0.0.1:8765", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(r => r.json());
+
+  /* ---------- MAIN LOOP ---------- */
+  const dots = qselAll('[class*="dotContainer"]');
+  let sent = 0;
+
+  for (let i = 0; i < dots.length && sent < LIMIT; i++) {
+    const dot = dots[i];
+    if (!dot.className.includes("dotContainerRed")) continue;  // skip correct dots
+
+    dot.scrollIntoView({ block: "center" });
+    dot.click();
+    await delay(LOAD_WAIT);
+
+    /* click “Show answer” */
+    const showBox = qselAll(".css-h0nko7-StyledInlineItem.e6i75dx1")
+      .find(el => /show answer/i.test(el.textContent.trim()));
+    (showBox?.querySelector("button") || showBox)?.click();
+
+    /* wait until correct answer shows “--success” */
+    const start = Date.now();
+    while (!qsel('[class*="--success"]') && Date.now() - start < REVEAL_WAIT) {
+      await delay(POLL_GAP);
+    }
+
+    /* QUESTION STEM */
+    const qNode = qsel('[class*="questionContent"]');
+    if (!qNode) continue;
+    const rawStem = qNode.innerText.trim();
+    const hasTable = !!qsel('[class*="modal-overflow-scroll"]');
+    const stemHTML = (hasTable ? rawStem : clean(rawStem)).replace(/\n/g, "<br>");
+
+    /* OPTIONS */
+    const answerBlocks = qselAll('[name="answertext"]');
+    const options = answerBlocks.map(blk =>
+      clean(blk.querySelector('[class*="--answerContent"]')?.innerText || "")
+    );
+
+    /* ensure 8 entries (A‑H) */
+    while (options.length < 8) options.push("");
+
+    /* CORRECT + EXPLANATION */
+    const correctBlk = qsel('[data-e2e-test-id="answer-theme-answerOptionCorrect"]');
+    if (!correctBlk) continue;
+
+    const correctLetter = letterOf(correctBlk);               // e.g. "C"
+    const explNode = correctBlk.querySelector(
+      '[data-e2e-test-id="answerExplanation"] ._981f8b48b6542a07--explanationContent'
+    );
+    const explanationHTML = (explNode ? clean(explNode.innerText) : "Explanation not found")
+      .replace(/\n/g, "<br>");
+
+    /* PAYLOAD FOR MCQ Ultimate V2.1 */
+    const note = {
+      deckName: DECK_NAME,
+      modelName: MODEL_NAME,
+      fields: {
+        Question: stemHTML,
+        "option_1 (A)": options[0],
+        "option_2 (B)": options[1],
+        "option_3 (C)": options[2],
+        "option_4 (D)": options[3],
+        "option_5 (E)": options[4],
+        "option_6 (F)": options[5],
+        "option_7 (G)": options[6],
+        "option_8 (H)": options[7],
+        Ans: correctLetter,
+        Explanation: explanationHTML
+      },
+      options: { allowDuplicate: false }
+    };
+
+    const res = await post({ action: "addNote", version: 6, params: { note } });
+
+    if (res.error) {
+      console.warn(`❌  Anki error on Q${i + 1}:`, res.error);
+    } else {
+      console.log(`✅  Added card for Q${i + 1}  (${sent + 1}/${LIMIT})`);
+      sent++;
+    }
+  }
+
+  console.log(
+    `%cFinished! ${sent} cards added to deck “${DECK_NAME}”.`,
+    "font-weight:bold;color:green"
+  );
+})();
