@@ -1,21 +1,20 @@
 (async () => {
   /* ---------- SETTINGS ---------- */
-  const LIMIT       = 10;                       // first N wrong questions
-  const DECK_NAME   = "AMBOSS Wrong MCQs";      // must match deck in Anki
-  const MODEL_NAME  = "MCQ Ultimate V2.1";      // the note type you showed
-  const LOAD_WAIT   = 800;   // ms to wait after clicking a dot
-  const REVEAL_WAIT = 4000;  // max ms to wait for correct highlight
-  const POLL_GAP    = 200;   // ms between polls
+  const LIMIT       = 10; Set your questions limit how many you want to extract
+  const DECK_NAME   = "AMBOSS Wrong MCQs"; must match deck in Anki
+  const MODEL_NAME  = "MCQ Ultimate V2.1";
+
+  /* ---------- TIMING ---------- */
+  const LOAD_WAIT   = 800;
+  const REVEAL_WAIT = 4000;
+  const POLL_GAP    = 200;
 
   /* ---------- HELPERS ---------- */
-  const clean = s => s.replace(/\s+/g, " ").trim();
-  const qsel  = sel => document.querySelector(sel);
-  const qselAll = sel => [...document.querySelectorAll(sel)];
-  const delay = ms => new Promise(r => setTimeout(r, ms));
-  const letterOf = blk =>
+  const delay  = ms => new Promise(r => setTimeout(r, ms));
+  const clean  = s  => s.replace(/\s+/g, " ").trim();
+  const letter = blk =>
     blk.querySelector('[data-test-id="CircledCharacter"]')?.innerText.trim() || "?";
-
-  const post = body =>
+  const post   = body =>
     fetch("http://127.0.0.1:8765", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -23,87 +22,124 @@
     }).then(r => r.json());
 
   /* ---------- MAIN LOOP ---------- */
-  const dots = qselAll('[class*="dotContainer"]');
-  let sent = 0;
+  const dots = [...document.querySelectorAll('[class*="dotContainer"]')];
+  let pushed = 0;
 
-  for (let i = 0; i < dots.length && sent < LIMIT; i++) {
-    const dot = dots[i];
-    if (!dot.className.includes("dotContainerRed")) continue;  // skip correct dots
+  const imgQuestions    = [];   // Q numbers with ≥1 image
+  const failedQuestions = [];   // Q numbers not added to Anki
 
-    dot.scrollIntoView({ block: "center" });
-    dot.click();
-    await delay(LOAD_WAIT);
+  for (let i = 0; i < dots.length && pushed < LIMIT; i++) {
+    const qNum = i + 1;         // progress‑bar numbering
+    const dot  = dots[i];
+    if (!dot.className.includes("dotContainerRed")) continue;
 
-    /* click “Show answer” */
-    const showBox = qselAll(".css-h0nko7-StyledInlineItem.e6i75dx1")
-      .find(el => /show answer/i.test(el.textContent.trim()));
-    (showBox?.querySelector("button") || showBox)?.click();
+    try {
+      dot.scrollIntoView({ block: "center" });
+      dot.click();
+      await delay(LOAD_WAIT);
 
-    /* wait until correct answer shows “--success” */
-    const start = Date.now();
-    while (!qsel('[class*="--success"]') && Date.now() - start < REVEAL_WAIT) {
-      await delay(POLL_GAP);
-    }
+      /* Show answer */
+      const box = [...document.querySelectorAll('.css-h0nko7-StyledInlineItem.e6i75dx1')]
+        .find(el => /show answer/i.test(el.textContent.trim()));
+      (box?.querySelector("button") || box)?.click();
 
-    /* QUESTION STEM */
-    const qNode = qsel('[class*="questionContent"]');
-    if (!qNode) continue;
-    const rawStem = qNode.innerText.trim();
-    const hasTable = !!qsel('[class*="modal-overflow-scroll"]');
-    const stemHTML = (hasTable ? rawStem : clean(rawStem)).replace(/\n/g, "<br>");
+      /* wait until correct flag appears */
+      const t0 = Date.now();
+      while (!document.querySelector('[class*="--success"]') &&
+             Date.now() - t0 < REVEAL_WAIT) await delay(POLL_GAP);
 
-    /* OPTIONS */
-    const answerBlocks = qselAll('[name="answertext"]');
-    const options = answerBlocks.map(blk =>
-      clean(blk.querySelector('[class*="--answerContent"]')?.innerText || "")
-    );
+      /* STEM (+ abstract) */
+      const qNode  = document.querySelector('[class*="questionContent"]');
+      const absSec = document.querySelector('section._760ee638b575af4a--abstractWrapper');
+      if (!qNode) { failedQuestions.push(qNum); continue; }
 
-    /* ensure 8 entries (A‑H) */
-    while (options.length < 8) options.push("");
+      const stemHTML = (
+        (absSec ? absSec.innerText + "\n\n" : "") + qNode.innerText
+      ).trim().replace(/\n/g, "<br>");
 
-    /* CORRECT + EXPLANATION */
-    const correctBlk = qsel('[data-e2e-test-id="answer-theme-answerOptionCorrect"]');
-    if (!correctBlk) continue;
+      /* IMAGES */
+      const thumbs = [
+        ...document.querySelectorAll('button[data-e2e-test-id="mini-media-viewer"] img[src]'),
+        ...document.querySelectorAll('button._26c6d085fbfd0c71--mediaViewerTrigger img[src]')
+      ];
+      if (thumbs.length) imgQuestions.push(qNum);
 
-    const correctLetter = letterOf(correctBlk);               // e.g. "C"
-    const explNode = correctBlk.querySelector(
-      '[data-e2e-test-id="answerExplanation"] ._981f8b48b6542a07--explanationContent'
-    );
-    const explanationHTML = (explNode ? clean(explNode.innerText) : "Explanation not found")
-      .replace(/\n/g, "<br>");
+      const pictures = thumbs.map((img, k) => ({
+        url: img.src,
+        filename: `amboss_${Date.now()}_${k}.jpg`,
+        fields: ["Question"]
+      }));
 
-    /* PAYLOAD FOR MCQ Ultimate V2.1 */
-    const note = {
-      deckName: DECK_NAME,
-      modelName: MODEL_NAME,
-      fields: {
-        Question: stemHTML,
-        "option_1 (A)": options[0],
-        "option_2 (B)": options[1],
-        "option_3 (C)": options[2],
-        "option_4 (D)": options[3],
-        "option_5 (E)": options[4],
-        "option_6 (F)": options[5],
-        "option_7 (G)": options[6],
-        "option_8 (H)": options[7],
-        Ans: correctLetter,
-        Explanation: explanationHTML
-      },
-      options: { allowDuplicate: false }
-    };
+      /* OPTIONS */
+      const optBlocks = [...document.querySelectorAll('[name="answertext"]')];
+      const optText   = optBlocks.map(b =>
+        clean(b.querySelector('[class*="--answerContent"]')?.innerText || "")
+      );
+      while (optText.length < 8) optText.push("");
 
-    const res = await post({ action: "addNote", version: 6, params: { note } });
+      /* CORRECT + EXPLANATION */
+      const okBlk = document.querySelector(
+        '[data-e2e-test-id="answer-theme-answerOptionCorrect"]'
+      );
+      if (!okBlk) { failedQuestions.push(qNum); continue; }
 
-    if (res.error) {
-      console.warn(`❌  Anki error on Q${i + 1}:`, res.error);
-    } else {
-      console.log(`✅  Added card for Q${i + 1}  (${sent + 1}/${LIMIT})`);
-      sent++;
+      const correctLetter = letter(okBlk);
+      const explanation = clean(
+        okBlk.querySelector(
+          '[data-e2e-test-id="answerExplanation"] ._981f8b48b6542a07--explanationContent'
+        )?.innerText || "Explanation not found"
+      ).replace(/\n/g, "<br>");
+
+      /* BUILD NOTE */
+      const note = {
+        deckName: DECK_NAME,
+        modelName: MODEL_NAME,
+        fields: {
+          Question: stemHTML,
+          "option_1 (A)": optText[0],
+          "option_2 (B)": optText[1],
+          "option_3 (C)": optText[2],
+          "option_4 (D)": optText[3],
+          "option_5 (E)": optText[4],
+          "option_6 (F)": optText[5],
+          "option_7 (G)": optText[6],
+          "option_8 (H)": optText[7],
+          Ans: correctLetter,
+          Explanation: explanation
+        },
+        pictures,
+        options: { allowDuplicate: false }
+      };
+
+      const res = await post({ action: "addNote", version: 6, params: { note } });
+      if (res.error) {
+        console.warn(`❌  Anki error on Q${qNum}:`, res.error);
+        failedQuestions.push(qNum);
+      } else {
+        console.log(`✅  Added card for Q${qNum}  (Pics: ${pictures.length})  (${pushed + 1}/${LIMIT})`);
+        pushed++;
+      }
+    } catch (err) {
+      console.error("Unexpected error on Q" + qNum, err);
+      failedQuestions.push(qNum);
     }
   }
 
+  /* ---------- FINAL OUTPUT ---------- */
   console.log(
-    `%cFinished! ${sent} cards added to deck “${DECK_NAME}”.`,
+    `%cDone! ${pushed} cards sent.`,
     "font-weight:bold;color:green"
   );
+  console.log(
+    `%cQuestions with images: ${imgQuestions.join(", ") || "none"}.`,
+    "color:green;font-weight:bold"
+  );
+  console.log(
+    `%cQuestions NOT added to Anki: ${failedQuestions.join(", ") || "none"}.`,
+    "color:green;font-weight:bold"
+  );
+
+  // Expose arrays for further inspection
+  window.QUESTIONS_WITH_IMAGES = imgQuestions;
+  window.QUESTIONS_FAILED      = failedQuestions;
 })();
