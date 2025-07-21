@@ -1,7 +1,7 @@
 (async () => {
   /* ---------- SETTINGS ---------- */
-  const LIMIT       = 10; Set your questions limit how many you want to extract
-  const DECK_NAME   = "AMBOSS Wrong MCQs"; must match deck in Anki
+  const LIMIT       = 10; // Set your questions limit how many you want to extract
+  const DECK_NAME   = "AMBOSS Wrong MCQs"; // Name Must match deck in Anki
   const MODEL_NAME  = "MCQ Ultimate V2.1";
 
   /* ---------- TIMING ---------- */
